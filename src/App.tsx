@@ -740,6 +740,11 @@ function App() {
 
           const methodSupportsBody = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(requestMethod);
           const useDevProxy = import.meta.env.DEV;
+          const directRequestHeaders: Record<string, string> = {
+            Accept: 'application/json, */*',
+            ...parsedHeaders,
+            ...(methodSupportsBody ? { 'Content-Type': 'application/json' } : {}),
+          };
 
           let response: Response;
           let responseText = '';
@@ -784,12 +789,7 @@ function App() {
             if (proxyTransportFailed) {
               response = await fetch(url.trim(), {
                 method: requestMethod,
-                headers: {
-                  'Content-Type': 'application/json',
-                  Accept: 'application/json, */*',
-                  ...parsedHeaders,
-                  'x-request-id': requestId,
-                },
+                headers: directRequestHeaders,
                 ...(methodSupportsBody ? { body: requestBody } : {}),
               });
               responseText = await response.text();
@@ -802,12 +802,7 @@ function App() {
           } else {
             response = await fetch(url.trim(), {
               method: requestMethod,
-              headers: {
-                'Content-Type': 'application/json',
-                Accept: 'application/json, */*',
-                ...parsedHeaders,
-                'x-request-id': requestId,
-              },
+              headers: directRequestHeaders,
               ...(methodSupportsBody ? { body: requestBody } : {}),
             });
             responseText = await response.text();
@@ -889,7 +884,9 @@ function App() {
               error:
                 err instanceof Error
                   ? err.message.includes('Failed to fetch')
-                    ? 'Network error. Configure Headers, Proxy URL, or Enable insecure TLS (dev only), then retry.'
+                    ? window.location.protocol === 'https:' && url.trim().startsWith('http://')
+                      ? 'Network error: HTTPS page cannot call HTTP endpoint (mixed content). Use an HTTPS API endpoint.'
+                      : 'Network error: request blocked or unreachable. On live site this is usually CORS. Ask API team to allow this origin in CORS settings.'
                     : err.message
                   : 'Request failed',
               isLoading: false,
