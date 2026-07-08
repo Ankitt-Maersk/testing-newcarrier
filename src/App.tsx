@@ -476,6 +476,30 @@ function App() {
       };
     }
 
+    const detectedInPngSlot = detectContentType(rawLabelData);
+
+    if (detectedInPngSlot === 'PDF') {
+      const pdfBase64 = tryGetPdfBase64(rawLabelData) || extractBase64Body(rawLabelData);
+      const pdfPreviewImage = await renderPdfBase64ToImage(pdfBase64);
+      return {
+        labelData: pdfBase64,
+        labelSrc: pdfPreviewImage,
+        detectedContentType: pdfPreviewImage ? 'PNG' : 'PDF',
+      };
+    }
+
+    if (detectedInPngSlot === 'ZPL') {
+      const zplText = toZplText(rawLabelData);
+      const labelarySrc = zplText ? await renderZplWithLabelary(zplText) : null;
+      if (zplText && labelarySrc) {
+        return {
+          labelData: zplText,
+          labelSrc: labelarySrc,
+          detectedContentType: 'ZPL',
+        };
+      }
+    }
+
     const pngBase64 = extractBase64Body(rawLabelData);
     return {
       labelData: pngBase64,
@@ -789,21 +813,33 @@ function App() {
               ? payloadObject.label
               : {};
 
+        const existingLabelLower =
+          isObjectRecord(payloadObject.label)
+            ? payloadObject.label
+            : isObjectRecord(payloadObject.Label)
+              ? payloadObject.Label
+              : {};
+
         const modifiedPayload = {
           ...(replaceLabelFormatRecursively(payloadObject, labelFormat) as Record<string, unknown>),
           Label: {
             ...existingLabel,
             LabelFormat: labelFormat,
+            labelFormat: labelFormat,
+            labelImage: labelFormat,
             ...(Object.prototype.hasOwnProperty.call(existingLabel, 'LabelImage')
               ? { LabelImage: (existingLabel as Record<string, unknown>).LabelImage }
               : {}),
           },
-          ...(Object.prototype.hasOwnProperty.call(payloadObject, 'labelImage')
-            ? { labelImage: labelFormat }
-            : {}),
-          ...(Object.prototype.hasOwnProperty.call(payloadObject, 'labelFormat')
-            ? { labelFormat }
-            : {}),
+          label: {
+            ...existingLabelLower,
+            LabelFormat: labelFormat,
+            labelFormat: labelFormat,
+            labelImage: labelFormat,
+          },
+          LabelFormat: labelFormat,
+          labelFormat: labelFormat,
+          labelImage: labelFormat,
           uniqueRequestId: requestId,
           UniqueRequestId: requestId,
           ...(Object.prototype.hasOwnProperty.call(payloadObject, 'requestId')
