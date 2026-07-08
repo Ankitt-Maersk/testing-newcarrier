@@ -69,6 +69,7 @@ function App() {
     if (typeof window === 'undefined') return '';
     return window.localStorage.getItem('hostedProxyUrl') || '';
   });
+  const [hostedProxyError, setHostedProxyError] = useState<string | null>(null);
   const [payload, setPayload] = useState(defaultPayload);
   const [customHeaders, setCustomHeaders] = useState('{}');
   const [allowInsecureTls, setAllowInsecureTls] = useState(false);
@@ -624,6 +625,31 @@ function App() {
     }
     setFormatSelectionError(null);
 
+    const normalizedHostedProxyUrl = hostedProxyUrl.trim().replace(/\/+$/, '');
+    const useHostedProxy = !import.meta.env.DEV && normalizedHostedProxyUrl.length > 0;
+
+    if (useHostedProxy) {
+      try {
+        const parsedProxyUrl = new URL(normalizedHostedProxyUrl);
+        const validProtocol = parsedProxyUrl.protocol === 'https:' || parsedProxyUrl.protocol === 'http:';
+        const hostnameLooksIncomplete =
+          !parsedProxyUrl.hostname.includes('.') && parsedProxyUrl.hostname !== 'localhost';
+
+        if (!validProtocol || hostnameLooksIncomplete) {
+          setHostedProxyError(
+            'Hosted Proxy URL looks invalid/incomplete. Example: https://carrier-label-proxy.<subdomain>.workers.dev'
+          );
+          return;
+        }
+      } catch {
+        setHostedProxyError(
+          'Hosted Proxy URL is invalid. Example: https://carrier-label-proxy.<subdomain>.workers.dev'
+        );
+        return;
+      }
+    }
+    setHostedProxyError(null);
+
     const payloadObject =
       typeof parsedPayload === 'object' && parsedPayload !== null
         ? (parsedPayload as Record<string, unknown>)
@@ -753,8 +779,6 @@ function App() {
 
           const methodSupportsBody = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(requestMethod);
           const useDevProxy = import.meta.env.DEV;
-          const normalizedHostedProxyUrl = hostedProxyUrl.trim().replace(/\/+$/, '');
-          const useHostedProxy = !import.meta.env.DEV && normalizedHostedProxyUrl.length > 0;
           const directRequestHeaders: Record<string, string> = {
             Accept: 'application/json, */*',
             ...parsedHeaders,
@@ -766,27 +790,47 @@ function App() {
           let responseData: unknown;
 
           if (useDevProxy || useHostedProxy) {
-            const proxyEndpoint = useDevProxy
-              ? '/api/label-proxy'
-              : `${normalizedHostedProxyUrl}/proxy`;
+            const proxyEndpoints = useDevProxy
+              ? ['/api/label-proxy']
+              : [`${normalizedHostedProxyUrl}/proxy`, normalizedHostedProxyUrl];
 
-            const proxyResponse = await fetch(proxyEndpoint, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                Accept: 'application/json, */*',
-              },
-              body: JSON.stringify({
-                method: requestMethod,
-                targetUrl: effectiveUrl,
-                payload: methodSupportsBody ? JSON.parse(requestBody) : null,
-                headers: {
-                  ...parsedHeaders,
-                  'x-request-id': requestId,
-                },
-                insecureTls: allowInsecureTls,
-              }),
-            });
+            let proxyResponse: Response | null = null;
+            let lastProxyError: unknown = null;
+
+            for (const proxyEndpoint of proxyEndpoints) {
+              try {
+                const candidateResponse = await fetch(proxyEndpoint, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    Accept: 'application/json, */*',
+                  },
+                  body: JSON.stringify({
+                    method: requestMethod,
+                    targetUrl: effectiveUrl,
+                    payload: methodSupportsBody ? JSON.parse(requestBody) : null,
+                    headers: {
+                      ...parsedHeaders,
+                      'x-request-id': requestId,
+                    },
+                    insecureTls: allowInsecureTls,
+                  }),
+                });
+
+                proxyResponse = candidateResponse;
+                if (candidateResponse.status !== 404) {
+                  break;
+                }
+              } catch (proxyError) {
+                lastProxyError = proxyError;
+              }
+            }
+
+            if (!proxyResponse) {
+              throw lastProxyError instanceof Error
+                ? lastProxyError
+                : new Error('Hosted proxy endpoint not reachable');
+            }
 
             response = proxyResponse;
             responseText = await proxyResponse.text();
@@ -905,7 +949,9 @@ function App() {
                   ? err.message.includes('Failed to fetch')
                     ? window.location.protocol === 'https:' && enteredUrl.startsWith('http://')
                       ? 'Network error: HTTPS page cannot call HTTP endpoint (mixed content). The app tried HTTPS automatically; verify the endpoint supports HTTPS.'
-                      : 'Network error: request blocked or unreachable. On live site this is usually CORS. Ask API team to allow this origin in CORS settings.'
+                      : useHostedProxy
+                        ? 'Network error: Hosted Proxy URL is unreachable. Verify full URL (example: https://carrier-label-proxy.<subdomain>.workers.dev).'
+                        : 'Network error: request blocked or unreachable. On live site this is usually CORS. Ask API team to allow this origin in CORS settings.'
                     : err.message
                   : 'Request failed',
               isLoading: false,
@@ -1062,6 +1108,7 @@ function App() {
                     onChange={(e) => {
                       const value = e.target.value;
                       setHostedProxyUrl(value);
+                      setHostedProxyError(null);
                       if (typeof window !== 'undefined') {
                         window.localStorage.setItem('hostedProxyUrl', value);
                       }
@@ -1069,6 +1116,9 @@ function App() {
                     placeholder="https://your-proxy.yourdomain.com"
                     className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-maersk-accent focus:border-transparent font-mono text-sm text-gray-800 placeholder-gray-400"
                   />
+                  {hostedProxyError && (
+                    <p className="mt-2 text-sm text-red-600">{hostedProxyError}</p>
+                  )}
                   <p className="mt-2 text-xs text-gray-500">
                     Leave empty for direct calls. Set this on GitHub Pages to bypass CORS.
                   </p>
