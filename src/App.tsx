@@ -61,15 +61,13 @@ const defaultPayload = `{
 const defaultUrl = 'https://api.example.com/carriers/labels';
 const supportedMethods = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const;
 type HttpMethod = (typeof supportedMethods)[number];
+const configuredHostedProxyUrl =
+  (import.meta.env.VITE_HOSTED_PROXY_URL as string | undefined)?.trim() ||
+  'https://carrier-label-proxy.a-shrivastava.workers.dev';
 
 function App() {
   const [url, setUrl] = useState(defaultUrl);
   const [requestMethod, setRequestMethod] = useState<HttpMethod>('POST');
-  const [hostedProxyUrl, setHostedProxyUrl] = useState(() => {
-    if (typeof window === 'undefined') return '';
-    return window.localStorage.getItem('hostedProxyUrl') || '';
-  });
-  const [hostedProxyError, setHostedProxyError] = useState<string | null>(null);
   const [payload, setPayload] = useState(defaultPayload);
   const [customHeaders, setCustomHeaders] = useState('{}');
   const [allowInsecureTls, setAllowInsecureTls] = useState(false);
@@ -625,30 +623,8 @@ function App() {
     }
     setFormatSelectionError(null);
 
-    const normalizedHostedProxyUrl = hostedProxyUrl.trim().replace(/\/+$/, '');
+    const normalizedHostedProxyUrl = configuredHostedProxyUrl.replace(/\/+$/, '');
     const useHostedProxy = !import.meta.env.DEV && normalizedHostedProxyUrl.length > 0;
-
-    if (useHostedProxy) {
-      try {
-        const parsedProxyUrl = new URL(normalizedHostedProxyUrl);
-        const validProtocol = parsedProxyUrl.protocol === 'https:' || parsedProxyUrl.protocol === 'http:';
-        const hostnameLooksIncomplete =
-          !parsedProxyUrl.hostname.includes('.') && parsedProxyUrl.hostname !== 'localhost';
-
-        if (!validProtocol || hostnameLooksIncomplete) {
-          setHostedProxyError(
-            'Hosted Proxy URL looks invalid/incomplete. Example: https://carrier-label-proxy.<subdomain>.workers.dev'
-          );
-          return;
-        }
-      } catch {
-        setHostedProxyError(
-          'Hosted Proxy URL is invalid. Example: https://carrier-label-proxy.<subdomain>.workers.dev'
-        );
-        return;
-      }
-    }
-    setHostedProxyError(null);
 
     const payloadObject =
       typeof parsedPayload === 'object' && parsedPayload !== null
@@ -950,7 +926,7 @@ function App() {
                     ? window.location.protocol === 'https:' && enteredUrl.startsWith('http://')
                       ? 'Network error: HTTPS page cannot call HTTP endpoint (mixed content). The app tried HTTPS automatically; verify the endpoint supports HTTPS.'
                       : useHostedProxy
-                        ? 'Network error: Hosted Proxy URL is unreachable. Verify full URL (example: https://carrier-label-proxy.<subdomain>.workers.dev).'
+                        ? 'Network error: Configured hosted proxy is unreachable. Check worker deployment status.'
                         : 'Network error: request blocked or unreachable. On live site this is usually CORS. Ask API team to allow this origin in CORS settings.'
                     : err.message
                   : 'Request failed',
@@ -1097,31 +1073,6 @@ function App() {
                     placeholder="Enter the label generation API endpoint..."
                     className="flex-1 px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-maersk-accent focus:border-transparent font-mono text-sm text-gray-800 placeholder-gray-400"
                   />
-                </div>
-                <div className="mt-3">
-                  <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-                    Hosted Proxy URL (for live demo)
-                  </label>
-                  <input
-                    type="url"
-                    value={hostedProxyUrl}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      setHostedProxyUrl(value);
-                      setHostedProxyError(null);
-                      if (typeof window !== 'undefined') {
-                        window.localStorage.setItem('hostedProxyUrl', value);
-                      }
-                    }}
-                    placeholder="https://your-proxy.yourdomain.com"
-                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-maersk-accent focus:border-transparent font-mono text-sm text-gray-800 placeholder-gray-400"
-                  />
-                  {hostedProxyError && (
-                    <p className="mt-2 text-sm text-red-600">{hostedProxyError}</p>
-                  )}
-                  <p className="mt-2 text-xs text-gray-500">
-                    Leave empty for direct calls. Set this on GitHub Pages to bypass CORS.
-                  </p>
                 </div>
               </div>
             </div>
