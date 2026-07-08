@@ -304,6 +304,38 @@ function App() {
     return normalizeBase64(trimmed);
   };
 
+  const decodeBase64Binary = (value: string): string | null => {
+    try {
+      return atob(extractBase64Body(value));
+    } catch {
+      return null;
+    }
+  };
+
+  const tryGetPdfBase64 = (value: string): string | null => {
+    const trimmed = value.trim();
+
+    if (/^data:application\/pdf;base64,/i.test(trimmed)) {
+      return extractBase64Body(trimmed);
+    }
+
+    const detected = detectContentType(trimmed);
+    if (detected === 'PDF') {
+      return extractBase64Body(trimmed);
+    }
+
+    if (looksLikeDataUri(trimmed) || !isLikelyBase64(trimmed)) {
+      return null;
+    }
+
+    const binary = decodeBase64Binary(trimmed);
+    if (binary && binary.startsWith('%PDF')) {
+      return extractBase64Body(trimmed);
+    }
+
+    return null;
+  };
+
   const tryDecodeBase64Text = (value: string): string | null => {
     try {
       const binary = atob(extractBase64Body(value));
@@ -405,10 +437,20 @@ function App() {
     }
 
     if (labelFormat === 1) {
-      const detectedInZplSlot = detectContentType(rawLabelData);
+      const zplText = toZplText(rawLabelData);
+      const hasZplMarkers = !!zplText && containsZplMarkers(zplText);
+      const labelarySrc = hasZplMarkers ? await renderZplWithLabelary(zplText) : null;
 
-      if (detectedInZplSlot === 'PDF') {
-        const pdfBase64 = extractBase64Body(rawLabelData);
+      if (hasZplMarkers) {
+        return {
+          labelData: zplText,
+          labelSrc: labelarySrc,
+          detectedContentType: 'ZPL',
+        };
+      }
+
+      const pdfBase64 = tryGetPdfBase64(rawLabelData);
+      if (pdfBase64) {
         const pdfPreviewImage = await renderPdfBase64ToImage(pdfBase64);
         return {
           labelData: pdfBase64,
@@ -417,14 +459,10 @@ function App() {
         };
       }
 
-      const zplText = toZplText(rawLabelData) || rawLabelData.trim();
-      const hasZplMarkers = zplText.includes('^XA') || zplText.includes('^XZ');
-      const labelarySrc = hasZplMarkers ? await renderZplWithLabelary(zplText) : null;
-
       return {
-        labelData: zplText,
-        labelSrc: labelarySrc,
-        detectedContentType: hasZplMarkers ? 'ZPL' : detectContentType(rawLabelData),
+        labelData: rawLabelData,
+        labelSrc: null,
+        detectedContentType: detectContentType(rawLabelData),
       };
     }
 
