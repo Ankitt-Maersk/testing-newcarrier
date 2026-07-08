@@ -436,8 +436,10 @@ function App() {
       return { labelData: null, labelSrc: null, detectedContentType: 'UNKNOWN' };
     }
 
-    if (labelFormat === 1) {
-      const zplText = toZplText(rawLabelData);
+    const tryRenderZplOrPdfFallback = async (
+      rawValue: string
+    ): Promise<{ labelData: string | null; labelSrc: string | null; detectedContentType: 'PNG' | 'PDF' | 'ZPL' | 'UNKNOWN' } | null> => {
+      const zplText = toZplText(rawValue);
       const hasZplMarkers = !!zplText && containsZplMarkers(zplText);
       const labelarySrc = hasZplMarkers ? await renderZplWithLabelary(zplText) : null;
 
@@ -449,7 +451,7 @@ function App() {
         };
       }
 
-      const pdfBase64 = tryGetPdfBase64(rawLabelData);
+      const pdfBase64 = tryGetPdfBase64(rawValue);
       if (pdfBase64) {
         const pdfPreviewImage = await renderPdfBase64ToImage(pdfBase64);
         return {
@@ -458,6 +460,13 @@ function App() {
           detectedContentType: pdfPreviewImage ? 'PNG' : 'PDF',
         };
       }
+
+      return null;
+    };
+
+    if (labelFormat === 1) {
+      const fallback = await tryRenderZplOrPdfFallback(rawLabelData);
+      if (fallback) return fallback;
 
       return {
         labelData: rawLabelData,
@@ -478,27 +487,17 @@ function App() {
 
     const detectedInPngSlot = detectContentType(rawLabelData);
 
-    if (detectedInPngSlot === 'PDF') {
-      const pdfBase64 = tryGetPdfBase64(rawLabelData) || extractBase64Body(rawLabelData);
-      const pdfPreviewImage = await renderPdfBase64ToImage(pdfBase64);
+    if (detectedInPngSlot === 'PNG') {
+      const pngBase64 = extractBase64Body(rawLabelData);
       return {
-        labelData: pdfBase64,
-        labelSrc: pdfPreviewImage,
-        detectedContentType: pdfPreviewImage ? 'PNG' : 'PDF',
+        labelData: pngBase64,
+        labelSrc: `data:image/png;base64,${pngBase64}`,
+        detectedContentType: 'PNG',
       };
     }
 
-    if (detectedInPngSlot === 'ZPL') {
-      const zplText = toZplText(rawLabelData);
-      const labelarySrc = zplText ? await renderZplWithLabelary(zplText) : null;
-      if (zplText && labelarySrc) {
-        return {
-          labelData: zplText,
-          labelSrc: labelarySrc,
-          detectedContentType: 'ZPL',
-        };
-      }
-    }
+    const fallback = await tryRenderZplOrPdfFallback(rawLabelData);
+    if (fallback) return fallback;
 
     const pngBase64 = extractBase64Body(rawLabelData);
     return {
