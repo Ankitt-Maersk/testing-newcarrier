@@ -506,6 +506,15 @@ function App() {
       return;
     }
 
+    const enteredUrl = url.trim();
+    const effectiveUrl =
+      !import.meta.env.DEV &&
+      typeof window !== 'undefined' &&
+      window.location.protocol === 'https:' &&
+      /^http:\/\//i.test(enteredUrl)
+        ? enteredUrl.replace(/^http:\/\//i, 'https://')
+        : enteredUrl;
+
     const removeCommentOnlyLines = (input: string): string =>
       input
         .split('\n')
@@ -759,7 +768,7 @@ function App() {
               },
               body: JSON.stringify({
                 method: requestMethod,
-                targetUrl: url.trim(),
+                targetUrl: effectiveUrl,
                 payload: methodSupportsBody ? JSON.parse(requestBody) : null,
                 headers: {
                   ...parsedHeaders,
@@ -787,7 +796,7 @@ function App() {
                 .includes('fetch failed');
 
             if (proxyTransportFailed) {
-              response = await fetch(url.trim(), {
+              response = await fetch(effectiveUrl, {
                 method: requestMethod,
                 headers: directRequestHeaders,
                 ...(methodSupportsBody ? { body: requestBody } : {}),
@@ -800,7 +809,7 @@ function App() {
               }
             }
           } else {
-            response = await fetch(url.trim(), {
+            response = await fetch(effectiveUrl, {
               method: requestMethod,
               headers: directRequestHeaders,
               ...(methodSupportsBody ? { body: requestBody } : {}),
@@ -884,8 +893,8 @@ function App() {
               error:
                 err instanceof Error
                   ? err.message.includes('Failed to fetch')
-                    ? window.location.protocol === 'https:' && url.trim().startsWith('http://')
-                      ? 'Network error: HTTPS page cannot call HTTP endpoint (mixed content). Use an HTTPS API endpoint.'
+                    ? window.location.protocol === 'https:' && enteredUrl.startsWith('http://')
+                      ? 'Network error: HTTPS page cannot call HTTP endpoint (mixed content). The app tried HTTPS automatically; verify the endpoint supports HTTPS.'
                       : 'Network error: request blocked or unreachable. On live site this is usually CORS. Ask API team to allow this origin in CORS settings.'
                     : err.message
                   : 'Request failed',
