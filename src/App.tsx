@@ -22,6 +22,8 @@ interface LabelResult {
   format: 'ZPL' | 'PDF' | 'PNG';
   requestedFormatCode: 1 | 2 | 3;
   requestId: string | null;
+  requestPayload: unknown;
+  rawRequest: string;
   labelData: string | null;
   labelSrc: string | null;
   detectedContentType: 'PNG' | 'PDF' | 'ZPL' | 'UNKNOWN';
@@ -78,6 +80,7 @@ function App() {
   });
   const [formatSelectionError, setFormatSelectionError] = useState<string | null>(null);
   const [results, setResults] = useState<LabelResult[]>([]);
+  const [expandedRequests, setExpandedRequests] = useState<Record<string, boolean>>({});
   const [expandedResponses, setExpandedResponses] = useState<Record<string, boolean>>({});
   const [copySuccess, setCopySuccess] = useState<string | null>(null);
   const [currentPayloadLine, setCurrentPayloadLine] = useState(1);
@@ -430,7 +433,8 @@ function App() {
 
   const normalizeByRequestedFormat = async (
     labelFormat: 1 | 2 | 3,
-    rawLabelData: string | null
+    rawLabelData: string | null,
+    responseData?: unknown
   ): Promise<{ labelData: string | null; labelSrc: string | null; detectedContentType: 'PNG' | 'PDF' | 'ZPL' | 'UNKNOWN' }> => {
     if (!rawLabelData) {
       return { labelData: null, labelSrc: null, detectedContentType: 'UNKNOWN' };
@@ -486,6 +490,28 @@ function App() {
     }
 
     const detectedInPngSlot = detectContentType(rawLabelData);
+    const responseLabelFormatCandidates: unknown[] = [];
+    if (responseData != null) {
+      collectValuesByKeyName(
+        responseData,
+        (key) => {
+          const normalizedKey = key.toLowerCase();
+          return normalizedKey === 'labelformat' || normalizedKey === 'labelimage';
+        },
+        responseLabelFormatCandidates
+      );
+    }
+
+    const responseLabelFormat = responseLabelFormatCandidates
+      .map((value) => {
+        if (typeof value === 'number') return value;
+        if (typeof value === 'string') {
+          const parsed = Number(value.trim());
+          return Number.isFinite(parsed) ? parsed : null;
+        }
+        return null;
+      })
+      .find((value): value is number => value === 1 || value === 2 || value === 3);
 
     if (detectedInPngSlot === 'PNG') {
       const pngBase64 = extractBase64Body(rawLabelData);
@@ -493,6 +519,16 @@ function App() {
         labelData: pngBase64,
         labelSrc: `data:image/png;base64,${pngBase64}`,
         detectedContentType: 'PNG',
+      };
+    }
+
+    if (responseLabelFormat === 2) {
+      const pdfBase64 = tryGetPdfBase64(rawLabelData) || extractBase64Body(rawLabelData);
+      const pdfPreviewImage = await renderPdfBase64ToImage(pdfBase64);
+      return {
+        labelData: pdfBase64,
+        labelSrc: pdfPreviewImage,
+        detectedContentType: pdfPreviewImage ? 'PNG' : 'PDF',
       };
     }
 
@@ -789,6 +825,8 @@ function App() {
       format,
       requestedFormatCode: labelFormat,
       requestId: null,
+      requestPayload: null,
+      rawRequest: '',
       labelData: null,
       labelSrc: null,
       detectedContentType: 'UNKNOWN',
@@ -851,6 +889,7 @@ function App() {
             ? { request_id: requestId }
             : {}),
         };
+        const requestPreview = JSON.stringify(modifiedPayload, null, 2);
 
         try {
           const requestBody = JSON.stringify(modifiedPayload);
@@ -961,6 +1000,8 @@ function App() {
                 format,
                 requestedFormatCode: labelFormat,
                 requestId,
+                requestPayload: modifiedPayload,
+                rawRequest: requestPreview,
                 labelData: null,
                 labelSrc: null,
                 detectedContentType: 'UNKNOWN',
@@ -992,7 +1033,7 @@ function App() {
                 : typeof recursiveLabelImage === 'string' && recursiveLabelImage.length > 0
                   ? recursiveLabelImage
               : extractLabelData(format, responseData);
-          const normalized = await normalizeByRequestedFormat(labelFormat, rawLabelData);
+          const normalized = await normalizeByRequestedFormat(labelFormat, rawLabelData, responseData);
 
           setResults((prev) => {
             const updated = [...prev];
@@ -1000,6 +1041,8 @@ function App() {
               format,
               requestedFormatCode: labelFormat,
               requestId,
+              requestPayload: modifiedPayload,
+              rawRequest: requestPreview,
               labelData: normalized.labelData,
               labelSrc: normalized.labelSrc || buildPreviewSource(format, rawLabelData),
               detectedContentType: normalized.detectedContentType,
@@ -1017,6 +1060,8 @@ function App() {
               format,
               requestedFormatCode: labelFormat,
               requestId,
+              requestPayload: modifiedPayload,
+              rawRequest: requestPreview,
               labelData: null,
               labelSrc: null,
               detectedContentType: 'UNKNOWN',
@@ -1038,6 +1083,13 @@ function App() {
           });
         }
     }
+  };
+
+  const toggleRequest = (key: string) => {
+    setExpandedRequests((prev) => ({
+      ...prev,
+      [key]: !prev[key],
+    }));
   };
 
   const toggleResponse = (key: string) => {
@@ -1204,18 +1256,14 @@ function App() {
                     className="w-full h-24 px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-maersk-accent focus:border-transparent font-mono text-sm text-gray-800 placeholder-gray-400 resize-y"
                   />
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div className="flex items-end">
-                    <label className="w-full px-4 py-3 bg-amber-50 border border-amber-200 rounded-lg flex items-center gap-2 cursor-pointer text-sm text-amber-800">
-                      <input
-                        type="checkbox"
-                        checked={allowInsecureTls}
-                        onChange={(e) => setAllowInsecureTls(e.target.checked)}
-                        className="accent-amber-600"
-                      />
-                      Enable insecure TLS (dev only)
-                    </label>
-                  </div>
+                <div className="hidden">
+                  <input
+                    type="checkbox"
+                    checked={allowInsecureTls}
+                    onChange={(e) => setAllowInsecureTls(e.target.checked)}
+                    className="accent-amber-600"
+                    aria-label="insecure TLS option"
+                  />
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
@@ -1444,6 +1492,44 @@ function App() {
                             </div>
                           </div>
 
+                          {/* Request Section */}
+                          <div>
+                            <button
+                              onClick={() => toggleRequest(result.format)}
+                              className="w-full flex items-center justify-between px-4 py-2 bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors text-sm"
+                            >
+                              <span className="font-medium text-gray-700">View Request</span>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    copyToClipboard(result.rawRequest, `${result.format}-request`);
+                                  }}
+                                  className="p-1 hover:bg-gray-200 rounded transition-colors"
+                                  title="Copy request"
+                                >
+                                  {copySuccess === `${result.format}-request` ? (
+                                    <CheckCircle className="w-4 h-4 text-green-500" />
+                                  ) : (
+                                    <Copy className="w-4 h-4 text-gray-400" />
+                                  )}
+                                </button>
+                                {expandedRequests[result.format] ? (
+                                  <ChevronUp className="w-4 h-4 text-gray-500" />
+                                ) : (
+                                  <ChevronDown className="w-4 h-4 text-gray-500" />
+                                )}
+                              </div>
+                            </button>
+                            {expandedRequests[result.format] && (
+                              <div className="mt-2 bg-gray-900 rounded-lg p-4 max-h-64 overflow-auto custom-scrollbar">
+                                <pre className="text-cyan-300 text-xs whitespace-pre-wrap break-words">
+                                  {result.rawRequest || '{}'}
+                                </pre>
+                              </div>
+                            )}
+                          </div>
+
                           {/* Response Section */}
                           <div>
                             <button
@@ -1455,12 +1541,12 @@ function App() {
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    copyToClipboard(result.rawResponse, result.format);
+                                    copyToClipboard(result.rawResponse, `${result.format}-response`);
                                   }}
                                   className="p-1 hover:bg-gray-200 rounded transition-colors"
                                   title="Copy response"
                                 >
-                                  {copySuccess === result.format ? (
+                                  {copySuccess === `${result.format}-response` ? (
                                     <CheckCircle className="w-4 h-4 text-green-500" />
                                   ) : (
                                     <Copy className="w-4 h-4 text-gray-400" />
