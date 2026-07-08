@@ -335,21 +335,7 @@ function App() {
 
   const renderZplWithLabelary = async (zplText: string): Promise<string | null> => {
     try {
-      const response = await fetch('/api/labelary-preview', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json, */*',
-        },
-        body: JSON.stringify({ zpl: zplText }),
-      });
-
-      if (!response.ok) {
-        return null;
-      }
-
-      const payload = (await response.json()) as { imageDataUrl?: unknown };
-      return typeof payload.imageDataUrl === 'string' ? payload.imageDataUrl : null;
+      return `https://api.labelary.com/v1/printers/8dpmm/labels/4x6/0/${encodeURIComponent(zplText)}`;
     } catch {
       return null;
     }
@@ -753,47 +739,50 @@ function App() {
           const requestBody = JSON.stringify(modifiedPayload);
 
           const methodSupportsBody = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(requestMethod);
+          const useDevProxy = import.meta.env.DEV;
 
-          const proxyResponse = await fetch('/api/label-proxy', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Accept: 'application/json, */*',
-            },
-            body: JSON.stringify({
-              method: requestMethod,
-              targetUrl: url.trim(),
-              payload: methodSupportsBody ? JSON.parse(requestBody) : null,
-              headers: {
-                ...parsedHeaders,
-                'x-request-id': requestId,
-              },
-              insecureTls: allowInsecureTls,
-            }),
-          });
-
-          let response = proxyResponse;
-          let responseText = await proxyResponse.text();
+          let response: Response;
+          let responseText = '';
           let responseData: unknown;
 
-          try {
-            responseData = JSON.parse(responseText);
-          } catch {
-            responseData = responseText;
-          }
+          if (useDevProxy) {
+            const proxyResponse = await fetch('/api/label-proxy', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Accept: 'application/json, */*',
+              },
+              body: JSON.stringify({
+                method: requestMethod,
+                targetUrl: url.trim(),
+                payload: methodSupportsBody ? JSON.parse(requestBody) : null,
+                headers: {
+                  ...parsedHeaders,
+                  'x-request-id': requestId,
+                },
+                insecureTls: allowInsecureTls,
+              }),
+            });
 
-          const proxyTransportFailed =
-            proxyResponse.status === 502 &&
-            typeof responseData === 'object' &&
-            responseData !== null &&
-            typeof (responseData as Record<string, unknown>).error === 'string' &&
-            ((responseData as Record<string, unknown>).error as string)
-              .toLowerCase()
-              .includes('fetch failed');
-
-          if (proxyTransportFailed) {
+            response = proxyResponse;
+            responseText = await proxyResponse.text();
             try {
-              const directResponse = await fetch(url.trim(), {
+              responseData = JSON.parse(responseText);
+            } catch {
+              responseData = responseText;
+            }
+
+            const proxyTransportFailed =
+              proxyResponse.status === 502 &&
+              typeof responseData === 'object' &&
+              responseData !== null &&
+              typeof (responseData as Record<string, unknown>).error === 'string' &&
+              ((responseData as Record<string, unknown>).error as string)
+                .toLowerCase()
+                .includes('fetch failed');
+
+            if (proxyTransportFailed) {
+              response = await fetch(url.trim(), {
                 method: requestMethod,
                 headers: {
                   'Content-Type': 'application/json',
@@ -803,42 +792,29 @@ function App() {
                 },
                 ...(methodSupportsBody ? { body: requestBody } : {}),
               });
-
-              response = directResponse;
-              responseText = await directResponse.text();
+              responseText = await response.text();
               try {
                 responseData = JSON.parse(responseText);
               } catch {
                 responseData = responseText;
               }
-            } catch (directError) {
-              const proxyDetails =
-                typeof responseData === 'object' && responseData !== null
-                  ? JSON.stringify(responseData)
-                  : String(responseData || '');
-              const directMessage =
-                directError instanceof Error ? directError.message : 'Direct browser request failed';
-
-              setResults((prev) => {
-                const updated = [...prev];
-                updated[index] = {
-                  format,
-                  requestedFormatCode: labelFormat,
-                  requestId,
-                  labelData: null,
-                  labelSrc: null,
-                  detectedContentType: 'UNKNOWN',
-                  response: {
-                    proxy: responseData,
-                    directError: directMessage,
-                  },
-                  rawResponse: proxyDetails,
-                  error: `Proxy and direct request both failed. Proxy details: ${proxyDetails.slice(0, 400)}${proxyDetails.length > 400 ? '...' : ''}`,
-                  isLoading: false,
-                };
-                return updated;
-              });
-              continue;
+            }
+          } else {
+            response = await fetch(url.trim(), {
+              method: requestMethod,
+              headers: {
+                'Content-Type': 'application/json',
+                Accept: 'application/json, */*',
+                ...parsedHeaders,
+                'x-request-id': requestId,
+              },
+              ...(methodSupportsBody ? { body: requestBody } : {}),
+            });
+            responseText = await response.text();
+            try {
+              responseData = JSON.parse(responseText);
+            } catch {
+              responseData = responseText;
             }
           }
 
