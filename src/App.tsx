@@ -187,6 +187,7 @@ function App() {
 
   const looksLikeDataUri = (value: string) => /^data:[^;]+;base64,/i.test(value);
   const looksLikeHttpUrl = (value: string) => /^https?:\/\//i.test(value);
+  const containsZplMarkers = (value: string) => /\^XA|\^XZ/i.test(value);
 
   const sanitizeBase64 = (value: string) => value.replace(/\s+/g, '');
 
@@ -247,7 +248,7 @@ function App() {
     const trimmed = value.trim();
     if (/^data:image\//i.test(trimmed)) return 'PNG';
     if (/^data:application\/pdf/i.test(trimmed)) return 'PDF';
-    if (trimmed.startsWith('^XA') || trimmed.includes('^XZ')) return 'ZPL';
+    if (containsZplMarkers(trimmed)) return 'ZPL';
     if (trimmed.startsWith('JVBERi0')) return 'PDF';
     if (trimmed.startsWith('iVBOR')) return 'PNG';
 
@@ -307,7 +308,19 @@ function App() {
     try {
       const binary = atob(extractBase64Body(value));
       const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-      return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+      const utf8 = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+      if (containsZplMarkers(utf8.replace(/\u0000/g, ''))) {
+        return utf8;
+      }
+
+      if (bytes.length >= 2) {
+        const utf16le = new TextDecoder('utf-16le', { fatal: false }).decode(bytes);
+        if (containsZplMarkers(utf16le.replace(/\u0000/g, ''))) {
+          return utf16le;
+        }
+      }
+
+      return utf8;
     } catch {
       return null;
     }
@@ -315,19 +328,35 @@ function App() {
 
   const toZplText = (rawLabelData: string): string | null => {
     const trimmed = rawLabelData.trim();
-    if (trimmed.includes('^XA') || trimmed.includes('^XZ')) {
+    if (containsZplMarkers(trimmed)) {
       return trimmed.replace(/\\r\\n|\\n|\\r/g, '\n');
     }
 
     const decoded = tryDecodeBase64Text(rawLabelData);
-    if (decoded && (decoded.includes('^XA') || decoded.includes('^XZ'))) {
-      return decoded.replace(/\r\n|\r/g, '\n');
+    if (decoded) {
+      const normalizedDecoded = decoded.replace(/\u0000/g, '').replace(/\r\n|\r/g, '\n');
+      if (containsZplMarkers(normalizedDecoded)) {
+        return normalizedDecoded;
+      }
+
+      try {
+        const decodedJson = JSON.parse(normalizedDecoded);
+        const decodedStrings: string[] = [];
+        collectStringValues(decodedJson, decodedStrings);
+        const zplCandidate = decodedStrings.find((value) => containsZplMarkers(value));
+        if (zplCandidate) {
+          return zplCandidate.replace(/\u0000/g, '').replace(/\r\n|\r/g, '\n');
+        }
+      } catch {
+        // Not JSON; continue with raw binary fallback.
+      }
     }
 
     try {
       const binary = atob(extractBase64Body(rawLabelData));
-      if (binary.includes('^XA') || binary.includes('^XZ')) {
-        return binary.replace(/\r\n|\r/g, '\n');
+      const normalizedBinary = binary.replace(/\u0000/g, '').replace(/\r\n|\r/g, '\n');
+      if (containsZplMarkers(normalizedBinary)) {
+        return normalizedBinary;
       }
     } catch {
       // no-op
